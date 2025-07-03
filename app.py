@@ -1,78 +1,55 @@
-# cosmic_ray_explorer.py
+# cosmic_ray_explorer_noaa.py
 
 import streamlit as st
-import requests
 import pandas as pd
+import requests
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Cosmic Ray Data Explorer", layout="wide")
+st.set_page_config(page_title="NOAA Cosmic Ray Explorer", layout="wide")
 
-st.title("☄️ Cosmic Ray Data Explorer")
+st.title("☄️ NOAA Cosmic Ray Explorer")
 st.markdown("""
-This app visualizes **cosmic ray flux vs. energy** using real data from the [Cosmic Ray Database (CRDB)](https://lpsc.in2p3.fr/crdb).
+Real-time **proton flux vs. energy** from NOAA GOES satellites.  
+Source: [NOAA SWPC](https://www.swpc.noaa.gov/products/goes-proton-flux)
 """)
 
-# --- Selection Controls ---
-sources = ['Voyager', 'AMS-02', 'ACE', 'PAMELA', 'SOHO']
-particles = ['Proton (H)', 'Helium (He)', 'Carbon (C)', 'Electron (e−)']
-particle_code = {
-    'Proton (H)': 'H',
-    'Helium (He)': 'He',
-    'Carbon (C)': 'C',
-    'Electron (e−)': 'e'
-}
+# ✅ NOAA API
+noaa_url = "https://services.swpc.noaa.gov/json/goes/primary/differential-proton-flux-1-day.json"
 
-source = st.selectbox("🔭 Choose Cosmic Ray Source", sources)
-particle = st.selectbox("🧪 Choose Particle Type", particles)
-log_scale = st.checkbox("📉 Use Log Scale for Y-axis (Flux)", value=True)
+st.info("Fetching latest proton flux data from NOAA...")
 
-# --- Fetch & Plot Data ---
-if st.button("📡 Fetch and Plot Cosmic Ray Data"):
-    st.info("Querying CRDB... Please wait.")
-    
-    api_url = f"https://lpsc.in2p3.fr/crdb/api_v1/dataset?exp={source}&nuc={particle_code[particle]}"
-    
-    try:
-        response = requests.get(api_url)
-        data = response.json()
-        
-        if not data or 'datasets' not in data or len(data['datasets']) == 0:
-            st.warning("No datasets found for this selection.")
-        else:
-            flux_data = []
+try:
+    response = requests.get(noaa_url)
+    raw_data = response.json()
 
-            for dataset in data['datasets']:
-                for point in dataset.get('data', []):
-                    flux_data.append({
-                        'Energy (GeV/n)': point.get('e_kn'),
-                        'Flux': point.get('val')
-                    })
+    df = pd.DataFrame(raw_data)
+    df['time_tag'] = pd.to_datetime(df['time_tag'])
 
-            df = pd.DataFrame(flux_data).dropna()
-            df = df.sort_values('Energy (GeV/n)')
+    # Get the latest flux for each energy channel
+    latest_flux = df.groupby('energy').tail(1)
+    latest_flux = latest_flux.sort_values('energy')
 
-            if df.empty:
-                st.error("No valid flux data available.")
-            else:
-                # Plot using matplotlib
-                fig, ax = plt.subplots()
-                ax.plot(df['Energy (GeV/n)'], df['Flux'], marker='o', linestyle='-')
-                ax.set_xlabel("Energy [GeV/nucleon]")
-                ax.set_ylabel("Flux [particles/(m²·sr·s·GeV/n)]")
-                ax.set_title(f"{particle} Flux from {source}")
+    # Clean columns
+    latest_flux = latest_flux[['energy', 'flux', 'satellite', 'time_tag']]
 
-                if log_scale:
-                    ax.set_yscale('log')
-                    ax.set_xscale('log')
+    # Plot using matplotlib
+    fig, ax = plt.subplots()
+    for sat in latest_flux['satellite'].unique():
+        sat_data = latest_flux[latest_flux['satellite'] == sat]
+        ax.plot(sat_data['energy'], sat_data['flux'], marker='o', linestyle='-', label=f"GOES-{sat}")
 
-                ax.grid(True, which='both', linestyle='--', alpha=0.5)
-                st.pyplot(fig)
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel("Energy [MeV]")
+    ax.set_ylabel("Proton Flux [particles/cm²·s·sr·MeV]")
+    ax.set_title("Latest Proton Flux from NOAA GOES")
+    ax.grid(True, which='both', linestyle='--', alpha=0.4)
+    ax.legend()
 
-                with st.expander("📄 View Raw Data"):
-                    st.dataframe(df)
+    st.pyplot(fig)
+    st.dataframe(latest_flux)
 
-                st.download_button("⬇️ Download CSV", data=df.to_csv(index=False), file_name=f"{source}_{particle_code[particle]}_flux.csv", mime="text/csv")
-    
-    except Exception as e:
-        st.error(f"Failed to retrieve data: {e}")
+    st.download_button("⬇️ Download CSV", latest_flux.to_csv(index=False), file_name="noaa_goes_proton_flux.csv")
 
+except Exception as e:
+    st.error(f"❌ Failed to fetch NOAA data: {e}")
