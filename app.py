@@ -1,55 +1,56 @@
-# cosmic_ray_explorer_noaa.py
-
 import streamlit as st
 import pandas as pd
-import requests
 import matplotlib.pyplot as plt
+import requests
 
-st.set_page_config(page_title="NOAA Cosmic Ray Explorer", layout="wide")
+st.set_page_config(page_title="Cosmic Ray Data Explorer", layout="wide")
+st.title("☄️ Cosmic Ray Data Explorer")
+st.markdown("Explore cosmic ray spectra from real space missions (Voyager, AMS-02, etc.) using CRDB data.")
 
-st.title("☄️ NOAA Cosmic Ray Explorer")
-st.markdown("""
-Real-time **proton flux vs. energy** from NOAA GOES satellites.  
-Source: [NOAA SWPC](https://www.swpc.noaa.gov/products/goes-proton-flux)
-""")
+# Define sources and particles (you can expand this)
+sources = ['Voyager', 'AMS02', 'PAMELA']
+particles = ['Proton', 'Helium', 'Electron']
 
-# ✅ NOAA API
-noaa_url = "https://services.swpc.noaa.gov/json/goes/primary/differential-proton-flux-1-day.json"
+# Sidebar selection
+source = st.sidebar.selectbox("Select Cosmic Ray Source", sources)
+particle = st.sidebar.selectbox("Select Particle Type", particles)
 
-st.info("Fetching latest proton flux data from NOAA...")
+# Fetch data from CRDB
+def fetch_crdb_data(source, particle):
+    base_url = "https://tools.ssdc.asi.it/CRDB/get_data.php"
+    params = {
+        'exp': source,
+        'nuc': particle,
+        'flux': '1',
+        'format': 'json'
+    }
 
-try:
-    response = requests.get(noaa_url)
-    raw_data = response.json()
+    response = requests.get(base_url, params=params)
+    if response.status_code == 200:
+        try:
+            data_json = response.json()
+            df = pd.DataFrame(data_json['data'], columns=['Ekn', 'Ekn_err', 'Flux', 'Flux_err'])
+            return df
+        except Exception as e:
+            st.error("Error parsing CRDB data: " + str(e))
+            return None
+    else:
+        st.error("Failed to fetch data from CRDB.")
+        return None
 
-    df = pd.DataFrame(raw_data)
-    df['time_tag'] = pd.to_datetime(df['time_tag'])
+# Load and display plot
+data = fetch_crdb_data(source, particle)
 
-    # Get the latest flux for each energy channel
-    latest_flux = df.groupby('energy').tail(1)
-    latest_flux = latest_flux.sort_values('energy')
-
-    # Clean columns
-    latest_flux = latest_flux[['energy', 'flux', 'satellite', 'time_tag']]
-
-    # Plot using matplotlib
+if data is not None and not data.empty:
+    st.subheader(f"{particle} Flux from {source}")
     fig, ax = plt.subplots()
-    for sat in latest_flux['satellite'].unique():
-        sat_data = latest_flux[latest_flux['satellite'] == sat]
-        ax.plot(sat_data['energy'], sat_data['flux'], marker='o', linestyle='-', label=f"GOES-{sat}")
-
+    ax.errorbar(data['Ekn'], data['Flux'], yerr=data['Flux_err'], fmt='o', ecolor='red', capsize=2)
     ax.set_xscale('log')
     ax.set_yscale('log')
-    ax.set_xlabel("Energy [MeV]")
-    ax.set_ylabel("Proton Flux [particles/cm²·s·sr·MeV]")
-    ax.set_title("Latest Proton Flux from NOAA GOES")
-    ax.grid(True, which='both', linestyle='--', alpha=0.4)
-    ax.legend()
-
+    ax.set_xlabel("Kinetic Energy per Nucleon [GeV/n]")
+    ax.set_ylabel("Flux [particles / m² sr s GeV/n]")
+    ax.set_title(f"{particle} Spectrum from {source}")
+    ax.grid(True, which="both", ls="--")
     st.pyplot(fig)
-    st.dataframe(latest_flux)
-
-    st.download_button("⬇️ Download CSV", latest_flux.to_csv(index=False), file_name="noaa_goes_proton_flux.csv")
-
-except Exception as e:
-    st.error(f"❌ Failed to fetch NOAA data: {e}")
+else:
+    st.warning("No data available or failed to fetch.")
